@@ -157,7 +157,9 @@ int monitor_jobs_on_node(const char *host, int port, const char *username, const
     printf("\n=== Jobs on %s ===\n", host);
     
     // Build ps command with optional filter
-    // Note: We use a simple whitelist validation for the filter to prevent command injection
+    // Security: We use a whitelist validation for the filter to prevent command injection.
+    // The validation only allows alphanumeric characters, dash, underscore, dot, and slash.
+    // This prevents special shell characters like quotes, semicolons, pipes, etc. from being used.
     char command[512];
     if (job_filter && strlen(job_filter) > 0) {
         // Validate filter contains only safe characters (alphanumeric, dash, underscore, dot, slash)
@@ -170,6 +172,7 @@ int monitor_jobs_on_node(const char *host, int port, const char *username, const
         }
         
         if (is_safe) {
+            // Safe to use in shell command as it contains only whitelisted characters
             snprintf(command, sizeof(command), "ps aux | grep '%s' | grep -v grep", job_filter);
         } else {
             fprintf(stderr, "Warning: job filter contains unsafe characters, using unfiltered ps\n");
@@ -269,7 +272,7 @@ int main(int argc, char *argv[]) {
                 char *host = token;
                 int port = atoi(colon + 1);
                 
-                if (port > 0 && port < 65536) {
+                if (port > 0 && port <= 65535) {
                     monitor_jobs_on_node(host, port, ssh_username, ssh_password, job_filter);
                 } else {
                     fprintf(stderr, "Invalid port for node %s\n", host);

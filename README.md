@@ -17,6 +17,8 @@ Before compiling and running this project, you need to have the following librar
 *   **libcurl**: For making HTTP requests to the ClickUp API.
 *   **libssh**: For SSH connectivity to HPC nodes for job monitoring.
 
+Note: The mjson library for JSON parsing is included in the source code and does not require separate installation.
+
 You can typically install these on a Debian-based system (like Ubuntu) using:
 
 ```bash
