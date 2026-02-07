@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -g -Iinclude
-LDFLAGS = -lcurl -ljansson -lm
+LDFLAGS = -lcurl -lssh -lm
 TARGET = clickup_tasks
 SRC_DIR = src
 OBJ_DIR = obj

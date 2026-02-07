@@ -77,12 +77,198 @@ void print_table_row(const char *id, const char *name, const char *status, const
 
 }
 
+// SSH command execution function
+int run_ssh_command(ssh_session session, const char *command) {
+    ssh_channel channel;
+    int rc;
+    char buffer[2048];
+    int nbytes;
+
+    channel = ssh_channel_new(session);
+    if (channel == NULL)
+        return SSH_ERROR;
+
+    rc = ssh_channel_open_session(channel);
+    if (rc != SSH_OK) {
+        ssh_channel_free(channel);
+        return rc;
+    }
+
+    rc = ssh_channel_request_exec(channel, command);
+    if (rc != SSH_OK) {
+        ssh_channel_close(channel);
+        ssh_channel_free(channel);
+        return rc;
+    }
+
+    nbytes = ssh_channel_read(channel, buffer, sizeof(buffer), 0);
+    while (nbytes > 0) {
+        if (fwrite(buffer, 1, (size_t)nbytes, stdout) != (size_t)nbytes) {
+            ssh_channel_close(channel);
+            ssh_channel_free(channel);
+            return SSH_ERROR;
+        }
+        nbytes = ssh_channel_read(channel, buffer, sizeof(buffer), 0);
+    }
+
+    if (nbytes < 0) {
+        ssh_channel_close(channel);
+        ssh_channel_free(channel);
+        return SSH_ERROR;
+    }
+
+    ssh_channel_send_eof(channel);
+    ssh_channel_close(channel);
+    ssh_channel_free(channel);
+
+    return SSH_OK;
+}
+
+// Monitor jobs on a specific node
+int monitor_jobs_on_node(const char *host, int port, const char *username, const char *password, const char *job_filter) {
+    ssh_session session;
+    int rc;
+
+    session = ssh_new();
+    if (session == NULL) {
+        fprintf(stderr, "Error creating SSH session\n");
+        return -1;
+    }
+
+    ssh_options_set(session, SSH_OPTIONS_HOST, host);
+    ssh_options_set(session, SSH_OPTIONS_PORT, &port);
+    ssh_options_set(session, SSH_OPTIONS_USER, username);
+
+    rc = ssh_connect(session);
+    if (rc != SSH_OK) {
+        fprintf(stderr, "Error connecting to %s: %s\n", host, ssh_get_error(session));
+        ssh_free(session);
+        return -1;
+    }
+
+    rc = ssh_userauth_password(session, NULL, password);
+    if (rc != SSH_AUTH_SUCCESS) {
+        fprintf(stderr, "Error authenticating with password: %s\n", ssh_get_error(session));
+        ssh_disconnect(session);
+        ssh_free(session);
+        return -1;
+    }
+
+    printf("\n=== Jobs on %s ===\n", host);
+    
+    // Build ps command with optional filter
+    char command[512];
+    if (job_filter && strlen(job_filter) > 0) {
+        snprintf(command, sizeof(command), "ps aux | grep '%s' | grep -v grep", job_filter);
+    } else {
+        snprintf(command, sizeof(command), "ps aux");
+    }
+    
+    rc = run_ssh_command(session, command);
+    if (rc != SSH_OK) {
+        fprintf(stderr, "Error running command: %s\n", ssh_get_error(session));
+    }
+
+    ssh_disconnect(session);
+    ssh_free(session);
+
+    return (rc == SSH_OK) ? 0 : -1;
+}
+
+void print_usage(const char *program_name) {
+    fprintf(stderr, "Usage: %s [OPTIONS]\n", program_name);
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -m            Monitor jobs mode - check running jobs on HPC nodes\n");
+    fprintf(stderr, "  -n NODES      Comma-separated list of nodes (e.g., 'node1:22,node2:22')\n");
+    fprintf(stderr, "  -u USERNAME   SSH username for job monitoring\n");
+    fprintf(stderr, "  -p PASSWORD   SSH password for job monitoring\n");
+    fprintf(stderr, "  -f FILTER     Filter jobs by name/pattern\n");
+    fprintf(stderr, "  -h            Show this help message\n");
+    fprintf(stderr, "\nEnvironment variables (for ClickUp tasks):\n");
+    fprintf(stderr, "  CLICKUP_TOKEN   Your ClickUp API token\n");
+    fprintf(stderr, "  CLICKUP_USERID  Your ClickUp user ID\n");
+    fprintf(stderr, "  CLICKUP_TEAMID  Your ClickUp team ID\n");
+    fprintf(stderr, "\nExamples:\n");
+    fprintf(stderr, "  %s                           # List ClickUp tasks\n", program_name);
+    fprintf(stderr, "  %s -m -n 'node1:22,node2:22' -u user -p pass  # Monitor all jobs\n", program_name);
+    fprintf(stderr, "  %s -m -n 'node1:22' -u user -p pass -f 'python'  # Monitor Python jobs\n", program_name);
+}
 
 
 
+int main(int argc, char *argv[]) {
+    // Parse command line options
+    int opt;
+    int monitor_mode = 0;
+    char *nodes = NULL;
+    char *ssh_username = NULL;
+    char *ssh_password = NULL;
+    char *job_filter = NULL;
 
-int main(void) {
+    while ((opt = getopt(argc, argv, "mn:u:p:f:h")) != -1) {
+        switch (opt) {
+            case 'm':
+                monitor_mode = 1;
+                break;
+            case 'n':
+                nodes = optarg;
+                break;
+            case 'u':
+                ssh_username = optarg;
+                break;
+            case 'p':
+                ssh_password = optarg;
+                break;
+            case 'f':
+                job_filter = optarg;
+                break;
+            case 'h':
+                print_usage(argv[0]);
+                return 0;
+            default:
+                print_usage(argv[0]);
+                return 1;
+        }
+    }
 
+    // If in monitor mode, check jobs on nodes
+    if (monitor_mode) {
+        if (!nodes || !ssh_username || !ssh_password) {
+            fprintf(stderr, "Error: Monitor mode requires -n (nodes), -u (username), and -p (password)\n\n");
+            print_usage(argv[0]);
+            return 1;
+        }
+
+        // Parse nodes and monitor each one
+        char *nodes_copy = strdup(nodes);
+        char *token = strtok(nodes_copy, ",");
+        
+        while (token != NULL) {
+            // Parse host:port
+            char *colon = strchr(token, ':');
+            if (colon) {
+                *colon = '\0';
+                char *host = token;
+                int port = atoi(colon + 1);
+                
+                if (port > 0 && port < 65536) {
+                    monitor_jobs_on_node(host, port, ssh_username, ssh_password, job_filter);
+                } else {
+                    fprintf(stderr, "Invalid port for node %s\n", host);
+                }
+            } else {
+                // Default to port 22
+                monitor_jobs_on_node(token, 22, ssh_username, ssh_password, job_filter);
+            }
+            
+            token = strtok(NULL, ",");
+        }
+        
+        free(nodes_copy);
+        return 0;
+    }
+
+    // Default mode: Fetch ClickUp tasks
     // 1. Get config from environment variables
 
     const char *token = getenv("CLICKUP_TOKEN");
@@ -127,7 +313,7 @@ int main(void) {
 
     char url[512]; // Increased buffer size for URL
 
-    snprintf(url, sizeof(url), "https://api.clickup.com/api/v2/team/%s/task?assignees[]=%s&include_closed=false", team_id, user_id);
+    snprintf(url, sizeof(url), "https://api.clickup.com/api/v3/team/%s/task?assignees[]=%s&include_closed=false", team_id, user_id);
 
 
 
@@ -167,104 +353,85 @@ int main(void) {
 
     } else {
 
-        // 4. Parse JSON response
+        // 4. Parse JSON response using mjson
+        const char *json_str = chunk.memory;
+        int json_len = (int)chunk.size;
 
-        json_error_t error;
+        // Check if JSON is valid
+        const char *tasks_ptr;
+        int tasks_len;
+        int tok_type = mjson_find(json_str, json_len, "$.tasks", &tasks_ptr, &tasks_len);
 
-        json_t *root = json_loads(chunk.memory, 0, &error);
-
-
-
-        if (!root) {
-
-            fprintf(stderr, "error: on line %d: %s\n", error.line, error.text);
-
-            // If JSON parsing fails, try to print the raw response for debugging
-
-            if (chunk.size > 0) {
-
-                fprintf(stderr, "Raw API response (first 500 chars): \n%.*s\n", (int)fmin(chunk.size, 500), chunk.memory);
-
-            }
-
-            json_decref(root);
-
-            return 1;
-
-        }
-
-
-
-        json_t *tasks = json_object_get(root, "tasks");
-
-        if (!json_is_array(tasks)) {
-
+        if (tok_type != MJSON_TOK_ARRAY) {
             fprintf(stderr, "error: 'tasks' is not an array in the JSON response.\n");
-
-            json_decref(root);
-
+            if (chunk.size > 0) {
+                fprintf(stderr, "Raw API response (first 500 chars): \n%.*s\n", (int)fmin(chunk.size, 500), chunk.memory);
+            }
+            free(chunk.memory);
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl_handle);
+            curl_global_cleanup();
             return 1;
-
         }
 
+        // Count tasks by iterating through the array
+        int task_count = 0;
+        int off = 0;
+        int koff, klen, voff, vlen, vtype;
+        while ((off = mjson_next(tasks_ptr, tasks_len, off, &koff, &klen, &voff, &vlen, &vtype)) != 0) {
+            task_count++;
+        }
 
-
-        if (json_array_size(tasks) == 0) {
-
+        if (task_count == 0) {
             printf("No tasks found.\n");
-
         } else {
-
             print_table_header();
 
+            // Iterate through tasks again and print them
+            off = 0;
+            while ((off = mjson_next(tasks_ptr, tasks_len, off, &koff, &klen, &voff, &vlen, &vtype)) != 0) {
+                const char *task_ptr = tasks_ptr + voff;
+                int task_len = vlen;
 
+                // Extract custom_id
+                char custom_id[ID_WIDTH + 1] = "N/A";
+                mjson_get_string(task_ptr, task_len, "$.custom_id", custom_id, sizeof(custom_id));
 
-            // 5. Iterate through tasks and print them
+                // Extract name
+                char name[NAME_WIDTH + 1] = "N/A";
+                mjson_get_string(task_ptr, task_len, "$.name", name, sizeof(name));
 
-            for (size_t i = 0; i < json_array_size(tasks); i++) {
+                // Extract status
+                char status_str[STATUS_WIDTH + 1] = "N/A";
+                const char *status_obj_ptr;
+                int status_obj_len;
+                if (mjson_find(task_ptr, task_len, "$.status", &status_obj_ptr, &status_obj_len) == MJSON_TOK_OBJECT) {
+                    mjson_get_string(status_obj_ptr, status_obj_len, "$.status", status_str, sizeof(status_str));
+                }
 
-                json_t *task = json_array_get(tasks, i);
-
-                
-
-                json_t *custom_id_json = json_object_get(task, "custom_id");
-
-                const char *custom_id = (custom_id_json && json_is_string(custom_id_json)) ? json_string_value(custom_id_json) : "N/A";
-
-
-
-                json_t *name_json = json_object_get(task, "name");
-
-                const char *name = (name_json && json_is_string(name_json)) ? json_string_value(name_json) : "N/A";
-
-
-
-                json_t *status_obj = json_object_get(task, "status");
-
-                json_t *status_val = (status_obj && json_is_object(status_obj)) ? json_object_get(status_obj, "status") : NULL;
-
-                const char *status_str = (status_val && json_is_string(status_val)) ? json_string_value(status_val) : "N/A";
-
-
-
-                // Assignees
-                json_t *assignees_arr = json_object_get(task, "assignees");
+                // Extract assignees
                 char assignees_str_buf[ASSIGNEES_WIDTH + 1];
-                assignees_str_buf[0] = '\0'; // Initialize as empty string
+                assignees_str_buf[0] = '\0';
                 size_t current_len = 0;
 
-                if (json_is_array(assignees_arr) && json_array_size(assignees_arr) > 0) {
-                    for (size_t j = 0; j < json_array_size(assignees_arr); j++) {
-                        json_t *assignee = json_array_get(assignees_arr, j);
-                        json_t *username_json = json_object_get(assignee, "username");
-                        const char *username = (username_json && json_is_string(username_json)) ? json_string_value(username_json) : NULL;
-
-                        if (username) {
-                            if (current_len > 0) { // Add comma and space if not the first assignee
+                const char *assignees_arr_ptr;
+                int assignees_arr_len;
+                if (mjson_find(task_ptr, task_len, "$.assignees", &assignees_arr_ptr, &assignees_arr_len) == MJSON_TOK_ARRAY) {
+                    int assignee_off = 0;
+                    int assignee_koff, assignee_klen, assignee_voff, assignee_vlen, assignee_vtype;
+                    
+                    while ((assignee_off = mjson_next(assignees_arr_ptr, assignees_arr_len, assignee_off, 
+                                                      &assignee_koff, &assignee_klen, &assignee_voff, &assignee_vlen, &assignee_vtype)) != 0) {
+                        const char *assignee_ptr = assignees_arr_ptr + assignee_voff;
+                        int assignee_len = assignee_vlen;
+                        
+                        char username[100];
+                        if (mjson_get_string(assignee_ptr, assignee_len, "$.username", username, sizeof(username)) > 0) {
+                            if (current_len > 0) {
                                 size_t remaining_space = ASSIGNEES_WIDTH - current_len;
                                 if (remaining_space > 0) {
                                     strncat(assignees_str_buf, ", ", remaining_space);
-                                    current_len += fmin(remaining_space, 2); // Add 2 for ", "
+                                    current_len += fmin(remaining_space, 2);
                                 }
                             }
                             
@@ -274,36 +441,28 @@ int main(void) {
                                 current_len += fmin(remaining_space, strlen(username));
                             }
                         }
-                        if (current_len >= ASSIGNEES_WIDTH) { // Stop if buffer is full
+                        
+                        if (current_len >= ASSIGNEES_WIDTH) {
                             break;
                         }
                     }
                 }
-                if (assignees_str_buf[0] == '\0') { // If no assignees were added
+                
+                if (assignees_str_buf[0] == '\0') {
                     strncpy(assignees_str_buf, "N/A", ASSIGNEES_WIDTH);
                     assignees_str_buf[ASSIGNEES_WIDTH] = '\0';
                 } else {
-                    // Add a trailing space for alignment if there's room
                     if (current_len < ASSIGNEES_WIDTH) {
                         assignees_str_buf[current_len] = ' ';
                         assignees_str_buf[current_len + 1] = '\0';
                     }
                 }
 
-
-
                 print_table_row(custom_id, name, status_str, assignees_str_buf);
-
             }
 
             print_table_separator();
-
         }
-
-
-
-        json_decref(root);
-
     }
 
 
