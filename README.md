@@ -66,9 +66,14 @@ Options:
 - `-m`: Enable monitor mode
 - `-n NODES`: Comma-separated list of nodes in format `hostname:port`
 - `-u USERNAME`: SSH username
-- `-p PASSWORD`: SSH password
-- `-f FILTER`: Optional filter to search for specific jobs (e.g., "python", "job_name")
+- `-p PASSWORD`: SSH password (WARNING: visible in process listings and shell history)
+- `-f FILTER`: Optional filter to search for specific jobs (alphanumeric, `-`, `_`, `.`, `/` only)
 - `-h`: Show help message
+
+**Security Warning**: Command-line passwords are visible in process listings and shell history. For production use, consider:
+- Using SSH keys for authentication instead of passwords
+- Storing credentials in a secure configuration file
+- Prompting for passwords interactively
 
 Examples:
 
@@ -78,6 +83,9 @@ Examples:
 
 # Monitor only Python jobs on a single node
 ./clickup_tasks -m -n "node1:22" -u admin -p secret -f "python"
+
+# Monitor jobs matching a specific pattern
+./clickup_tasks -m -n "node1:22" -u admin -p secret -f "job_name"
 ```
 
 ## API Version

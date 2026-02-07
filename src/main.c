@@ -157,9 +157,24 @@ int monitor_jobs_on_node(const char *host, int port, const char *username, const
     printf("\n=== Jobs on %s ===\n", host);
     
     // Build ps command with optional filter
+    // Note: We use a simple whitelist validation for the filter to prevent command injection
     char command[512];
     if (job_filter && strlen(job_filter) > 0) {
-        snprintf(command, sizeof(command), "ps aux | grep '%s' | grep -v grep", job_filter);
+        // Validate filter contains only safe characters (alphanumeric, dash, underscore, dot, slash)
+        int is_safe = 1;
+        for (const char *p = job_filter; *p; p++) {
+            if (!isalnum(*p) && *p != '-' && *p != '_' && *p != '.' && *p != '/') {
+                is_safe = 0;
+                break;
+            }
+        }
+        
+        if (is_safe) {
+            snprintf(command, sizeof(command), "ps aux | grep '%s' | grep -v grep", job_filter);
+        } else {
+            fprintf(stderr, "Warning: job filter contains unsafe characters, using unfiltered ps\n");
+            snprintf(command, sizeof(command), "ps aux");
+        }
     } else {
         snprintf(command, sizeof(command), "ps aux");
     }
@@ -181,13 +196,16 @@ void print_usage(const char *program_name) {
     fprintf(stderr, "  -m            Monitor jobs mode - check running jobs on HPC nodes\n");
     fprintf(stderr, "  -n NODES      Comma-separated list of nodes (e.g., 'node1:22,node2:22')\n");
     fprintf(stderr, "  -u USERNAME   SSH username for job monitoring\n");
-    fprintf(stderr, "  -p PASSWORD   SSH password for job monitoring\n");
-    fprintf(stderr, "  -f FILTER     Filter jobs by name/pattern\n");
+    fprintf(stderr, "  -p PASSWORD   SSH password for job monitoring (WARNING: visible in process list)\n");
+    fprintf(stderr, "  -f FILTER     Filter jobs by name/pattern (alphanumeric, -, _, ., / only)\n");
     fprintf(stderr, "  -h            Show this help message\n");
     fprintf(stderr, "\nEnvironment variables (for ClickUp tasks):\n");
     fprintf(stderr, "  CLICKUP_TOKEN   Your ClickUp API token\n");
     fprintf(stderr, "  CLICKUP_USERID  Your ClickUp user ID\n");
     fprintf(stderr, "  CLICKUP_TEAMID  Your ClickUp team ID\n");
+    fprintf(stderr, "\nSecurity note:\n");
+    fprintf(stderr, "  Command-line passwords are visible in process listings. For production\n");
+    fprintf(stderr, "  use, consider using SSH keys or prompting for passwords interactively.\n");
     fprintf(stderr, "\nExamples:\n");
     fprintf(stderr, "  %s                           # List ClickUp tasks\n", program_name);
     fprintf(stderr, "  %s -m -n 'node1:22,node2:22' -u user -p pass  # Monitor all jobs\n", program_name);
