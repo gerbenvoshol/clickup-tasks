@@ -56,4 +56,8 @@ dkms.conf
 
 # Build artifacts
 clickup_tasks
+clicky
 obj/
+
+# Configuration
+.env

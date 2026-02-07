@@ -1,14 +1,25 @@
-# C ClickUp Tasks
+# C ClickUp Tasks Tools
 
-A simple C command-line tool to fetch and display ClickUp tasks, with support for monitoring running jobs on HPC nodes via SSH.
+This repository contains two C-based tools for working with ClickUp and HPC monitoring:
+
+1. **clickup_tasks**: Simple command-line tool to fetch and display ClickUp tasks
+2. **clicky**: Diagnostics Batch Runtime Monitor - correlates ClickUp tasks with running HPC jobs
 
 ## Features
 
+### clickup_tasks
 - Fetch and display ClickUp tasks in a formatted table
 - Monitor running jobs on HPC nodes using SSH
 - Filter jobs by name/pattern using ps command
 - Uses lightweight mjson library for JSON parsing
-- Built with libcurl and libssh
+
+### clicky (Diagnostics Batch Runtime Monitor)
+- **Version**: 1.4.4
+- Fetches tasks from a specific ClickUp list
+- Monitors running processes on multiple HPC nodes via SSH
+- Correlates tasks with running jobs
+- Generates HTML reports showing task status and process information
+- Reads configuration from .env file
 
 ## Prerequisites
 
@@ -28,25 +39,23 @@ sudo apt-get install libcurl4-openssl-dev libssh-dev
 
 ## Compilation
 
-To compile the project, simply run the `make` command in the project's root directory:
+To compile both tools, simply run the `make` command in the project's root directory:
 
 ```bash
 make
 ```
 
-This will generate an executable file named `clickup_tasks`.
+This will generate two executable files:
+- `clickup_tasks` - The simple task lister
+- `clicky` - The diagnostics batch runtime monitor
 
 ## Usage
 
-### List ClickUp Tasks
+### clickup_tasks - Simple Task Lister
 
-To run the program in default mode (list ClickUp tasks), you need to set the following environment variables with your ClickUp credentials:
+#### List ClickUp Tasks
 
-*   `CLICKUP_TOKEN`: Your personal ClickUp API token.
-*   `CLICKUP_USERID`: Your numeric user ID.
-*   `CLICKUP_TEAMID`: The ID of the team/workspace you want to fetch tasks from.
-
-You can set them and run the executable like this:
+To run the program in default mode (list ClickUp tasks), set environment variables:
 
 ```bash
 export CLICKUP_TOKEN="your_api_token"
@@ -56,49 +65,68 @@ export CLICKUP_TEAMID="your_team_id"
 ./clickup_tasks
 ```
 
-### Monitor Jobs on HPC Nodes
-
-To monitor running jobs on HPC nodes using SSH:
+#### Monitor Jobs on HPC Nodes
 
 ```bash
 ./clickup_tasks -m -n "node1:22,node2:22" -u username -p password
 ```
 
-Options:
-- `-m`: Enable monitor mode
-- `-n NODES`: Comma-separated list of nodes in format `hostname:port`
-- `-u USERNAME`: SSH username
-- `-p PASSWORD`: SSH password (WARNING: visible in process listings and shell history)
-- `-f FILTER`: Optional filter to search for specific jobs (alphanumeric, `-`, `_`, `.`, `/` only)
-- `-h`: Show help message
+### clicky - Diagnostics Batch Runtime Monitor
 
-**Security Warning**: Command-line passwords are visible in process listings and shell history. For production use, consider:
-- Using SSH keys for authentication instead of passwords
-- Storing credentials in a secure configuration file
-- Prompting for passwords interactively
+#### Configuration
 
-Examples:
+Clicky reads its configuration from a `.env` file:
 
 ```bash
-# Monitor all jobs on two nodes
-./clickup_tasks -m -n "node1:22,node2:22" -u admin -p secret
-
-# Monitor only Python jobs on a single node
-./clickup_tasks -m -n "node1:22" -u admin -p secret -f "python"
-
-# Monitor jobs matching a specific pattern
-./clickup_tasks -m -n "node1:22" -u admin -p secret -f "job_name"
+cp .env.example .env
+# Edit .env with your settings
 ```
 
-## API Version
+The `.env` file should contain:
 
-This tool uses the ClickUp API v3. The API endpoint is:
+```bash
+CLICKUP_TOKEN=your_clickup_api_token
+CLICKUP_LIST_ID=your_list_id
+SSH_USER=your_ssh_username
+SSH_PASS=your_ssh_password
+NODES=node1 node2 node3
 ```
-https://api.clickup.com/api/v3/team/{team_id}/task
+
+#### Running clicky
+
+```bash
+./clicky                          # Generate task_status.html
+./clicky --html /path/to/report.html  # Custom output file
 ```
+
+#### How it Works
+
+1. Reads configuration from `.env` file
+2. Fetches tasks from ClickUp list (API v2)
+3. Fetches comments for each task
+4. Connects to HPC nodes via SSH and runs `ps aux`
+5. Correlates tasks with running processes
+6. Generates HTML report with task status and process information
+
+## API Versions
+
+- **clickup_tasks**: ClickUp API v3 (team endpoint)
+- **clicky**: ClickUp API v2 (list endpoint) - matches bash script
+
+## Security
+
+- Keep `.env` file secure (chmod 600)
+- Add `.env` to .gitignore
+- Use SSH keys instead of passwords when possible
+- Command-line passwords are visible in process listings
 
 ## Dependencies
 
-- **mjson**: Lightweight JSON parser (included in source)
+- **mjson**: Lightweight JSON parser (included)
 - **libcurl**: HTTP client library
 - **libssh**: SSH client library
+
+## Credits
+
+- **clicky**: Based on bash script by Serge Wielhouwer - GenomeScan B.V.
+- **mjson**: https://github.com/cesanta/mjson
